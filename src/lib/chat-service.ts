@@ -8,6 +8,16 @@ interface ChatMessage {
 interface ChatResponse {
   message: string;
   error?: string;
+  links?: any[];
+}
+
+interface LinkSearchResult {
+  title: string;
+  url: string;
+  description?: string;
+  category: string;
+  subcategory: string;
+  tags?: string[];
 }
 
 /**
@@ -22,6 +32,50 @@ export const chatService = {
    */
   async sendMessage(messages: ChatMessage[], query: string): Promise<ChatResponse> {
     try {
+      // Check if this is a search query
+      const isSearchQuery = this.isLinkSearchQuery(query);
+      
+      // If it looks like a search query, first try to find relevant links
+      let relevantLinks: LinkSearchResult[] = [];
+      let linksContext = '';
+      
+      if (isSearchQuery) {
+        try {
+          // Search for relevant links using the assistant API
+          const searchResponse = await axios.post('/api/assistant', {
+            action: 'search',
+            query: query
+          });
+          
+          if (searchResponse.data.results && searchResponse.data.results.length > 0) {
+            relevantLinks = searchResponse.data.results.slice(0, 5);
+            
+            // Format links as context for the AI
+            linksContext = 'Here are some relevant links from the Nexus database:\n\n' +
+              relevantLinks.map((link, index) => {
+                return `${index + 1}. ${link.title}\n` +
+                       `   Category: ${link.category} > ${link.subcategory}\n` +
+                       `   URL: ${link.url}\n` +
+                       `   ${link.description ? 'Description: ' + link.description : ''}\n` +
+                       `   ${link.tags && link.tags.length > 0 ? 'Tags: ' + link.tags.join(', ') : ''}`;
+              }).join('\n\n');
+            
+            // If we have an AI-enhanced response, use it
+            if (searchResponse.data.aiResponse) {
+              return {
+                message: searchResponse.data.aiResponse,
+                links: relevantLinks
+              };
+            }
+          } else {
+            linksContext = 'I searched the Nexus database but couldn\'t find any links matching your query.';
+          }
+        } catch (searchError) {
+          console.error('Error searching for links:', searchError);
+          // Continue with regular chat if search fails
+        }
+      }
+
       // Prepare the messages for the API call
       const apiMessages = [
         ...messages,
@@ -34,7 +88,16 @@ export const chatService = {
           role: 'system',
           content: 'You are NexusAI, a helpful assistant for the ZAO Nexus portal. ' +
             'You help users find links, understand categories, and navigate the platform. ' +
-            'Keep responses concise and focused on helping users find information in the Nexus database.'
+            'Keep responses concise and focused on helping users find information in the Nexus database. ' +
+            'When users ask about specific topics, try to recommend relevant categories or subcategories to explore.'
+        });
+      }
+      
+      // If we have relevant links, add them as context
+      if (linksContext) {
+        apiMessages.splice(1, 0, {
+          role: 'system',
+          content: linksContext
         });
       }
 
@@ -44,7 +107,8 @@ export const chatService = {
       });
 
       return {
-        message: response.data.message
+        message: response.data.message,
+        links: relevantLinks.length > 0 ? relevantLinks : undefined
       };
     } catch (error) {
       console.error('Error in chat service:', error);
@@ -53,6 +117,22 @@ export const chatService = {
         error: 'Failed to get response from AI. Please try again later.'
       };
     }
+  },
+  
+  /**
+   * Determine if a query is likely looking for links
+   * @param query - The user query to analyze
+   * @returns boolean indicating if this is likely a search query
+   */
+  isLinkSearchQuery(query: string): boolean {
+    const searchTerms = [
+      'find', 'search', 'looking for', 'where', 'how to', 'link', 'links',
+      'show me', 'get', 'discord', 'website', 'resource', 'resources',
+      'where can i', 'how do i', 'url', 'site', 'category', 'related to'
+    ];
+    
+    const lowerQuery = query.toLowerCase();
+    return searchTerms.some(term => lowerQuery.includes(term));
   },
 
   /**

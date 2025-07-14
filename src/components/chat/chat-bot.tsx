@@ -4,11 +4,21 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { chatService, ChatMessage } from '@/lib/chat-service';
-import { Send, X, Minimize2, Maximize2, Search } from 'lucide-react';
+import { Send, X, Minimize2, Maximize2, Search, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
 
 interface ChatBotProps {
   className?: string;
+}
+
+interface LinkResult {
+  title: string;
+  url: string;
+  description?: string;
+  category: string;
+  subcategory: string;
+  tags?: string[];
 }
 
 export function ChatBot({ className }: ChatBotProps) {
@@ -22,6 +32,7 @@ export function ChatBot({ className }: ChatBotProps) {
       content: 'Hi! I\'m NexusAI. I can help you find links or answer questions about the Nexus portal. What are you looking for today?'
     }
   ]);
+  const [messageLinks, setMessageLinks] = useState<Record<number, LinkResult[]>>({});
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -63,10 +74,17 @@ export function ChatBot({ className }: ChatBotProps) {
         ]);
       } else {
         // Add AI response to chat
-        setMessages(prev => [
-          ...prev,
-          { role: 'assistant', content: response.message }
-        ]);
+        const assistantMessage: ChatMessage = { role: 'assistant', content: response.message };
+        const newMessages = [...messages, userMessage, assistantMessage];
+        setMessages(newMessages);
+        
+        // Store any links associated with this message
+        if (response.links && response.links.length > 0) {
+          setMessageLinks(prev => ({
+            ...prev,
+            [newMessages.length - 1]: response.links as LinkResult[]
+          }));
+        }
       }
     } catch (error) {
       console.error('Error sending message:', error);
@@ -146,6 +164,50 @@ export function ChatBot({ className }: ChatBotProps) {
                     <div className="text-sm">
                       {message.content}
                     </div>
+                    
+                    {/* Display links if available for this message */}
+                    {messageLinks[index] && messageLinks[index].length > 0 && (
+                      <div className="mt-3 pt-2 border-t border-gray-200 dark:border-gray-700">
+                        <p className="text-xs font-medium mb-2">Relevant Links:</p>
+                        <div className="space-y-2">
+                          {messageLinks[index].map((link, linkIndex) => (
+                            <div key={linkIndex} className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700 text-xs">
+                              <div className="flex justify-between items-start">
+                                <a 
+                                  href={link.url} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="font-medium text-blue-600 dark:text-blue-400 hover:underline flex items-center"
+                                >
+                                  {link.title}
+                                  <ExternalLink className="h-3 w-3 ml-1" />
+                                </a>
+                              </div>
+                              
+                              <div className="flex items-center gap-1 mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                <span>{link.category}</span>
+                                <span>›</span>
+                                <span>{link.subcategory}</span>
+                              </div>
+                              
+                              {link.description && (
+                                <p className="mt-1 text-gray-600 dark:text-gray-300">{link.description}</p>
+                              )}
+                              
+                              {link.tags && link.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                  {link.tags.map((tag, tagIndex) => (
+                                    <Badge key={tagIndex} variant="secondary" className="text-[10px] px-1 py-0">
+                                      {tag}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {isLoading && (

@@ -41,14 +41,18 @@ export const chatService = {
       
       if (isSearchQuery) {
         try {
+          console.log('Detected search query, calling assistant API:', query);
           // Search for relevant links using the assistant API
           const searchResponse = await axios.post('/api/assistant', {
             action: 'search',
             query: query
           });
           
-          if (searchResponse.data.results && searchResponse.data.results.length > 0) {
+          console.log('Assistant API response:', JSON.stringify(searchResponse.data).substring(0, 200));
+          
+          if (searchResponse.data.results && Array.isArray(searchResponse.data.results) && searchResponse.data.results.length > 0) {
             relevantLinks = searchResponse.data.results.slice(0, 5);
+            console.log(`Found ${relevantLinks.length} relevant links`);
             
             // Format links as context for the AI
             linksContext = 'Here are some relevant links from the Nexus database:\n\n' +
@@ -62,16 +66,25 @@ export const chatService = {
             
             // If we have an AI-enhanced response, use it
             if (searchResponse.data.aiResponse) {
+              console.log('Using AI-enhanced response from assistant API');
               return {
                 message: searchResponse.data.aiResponse,
                 links: relevantLinks
               };
             }
           } else {
+            console.log('No links found for query:', query);
             linksContext = 'I searched the Nexus database but couldn\'t find any links matching your query.';
           }
-        } catch (searchError) {
+        } catch (searchError: any) {
           console.error('Error searching for links:', searchError);
+          if (searchError.response) {
+            console.error('Assistant API error details:', {
+              status: searchError.response.status,
+              statusText: searchError.response.statusText,
+              data: searchError.response.data
+            });
+          }
           // Continue with regular chat if search fails
         }
       }
@@ -102,19 +115,49 @@ export const chatService = {
       }
 
       // Make the API call
-      const response = await axios.post('/api/chat', {
-        messages: apiMessages
-      });
-
-      return {
-        message: response.data.message,
-        links: relevantLinks.length > 0 ? relevantLinks : undefined
-      };
+      console.log('Calling chat API with messages:', JSON.stringify(apiMessages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' }))));
+      
+      try {
+        const response = await axios.post('/api/chat', {
+          messages: apiMessages
+        });
+        
+        console.log('Chat API response received successfully');
+        
+        return {
+          message: response.data.message,
+          links: relevantLinks.length > 0 ? relevantLinks : undefined
+        };
+      } catch (chatError: any) {
+        console.error('Error in chat API call:', chatError);
+        
+        // Extract detailed error information if available
+        if (chatError.response) {
+          console.error('Chat API error details:', {
+            status: chatError.response.status,
+            statusText: chatError.response.statusText,
+            data: chatError.response.data
+          });
+          
+          // If we have a specific error message from the API, use it
+          if (chatError.response.data && chatError.response.data.error) {
+            return {
+              message: '',
+              error: `AI error: ${chatError.response.data.error}${chatError.response.data.details ? ' - ' + chatError.response.data.details : ''}`
+            };
+          }
+        }
+        
+        return {
+          message: '',
+          error: 'Failed to get response from AI. Please try again later.'
+        };
+      }
     } catch (error) {
-      console.error('Error in chat service:', error);
+      console.error('General error in chat service:', error);
       return {
         message: '',
-        error: 'Failed to get response from AI. Please try again later.'
+        error: 'Failed to get response from AI. Please check your connection and try again.'
       };
     }
   },

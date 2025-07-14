@@ -16,15 +16,62 @@ try {
 }
 
 // Path to the links data file
+// Try both links.json and links-updated.json to ensure we find the correct file
 const linksFilePath = path.join(process.cwd(), 'src', 'data', 'links.json');
+const linksUpdatedFilePath = path.join(process.cwd(), 'src', 'data', 'links-updated.json');
+
+// Log the paths we're checking
+console.log('Checking for links files at:');
+console.log(' - ' + linksFilePath);
+console.log(' - ' + linksUpdatedFilePath);
 
 // Function to load links data
 async function loadLinksData() {
+  // Try the primary links.json file first
   try {
-    const data = await fs.promises.readFile(linksFilePath, 'utf8');
-    return JSON.parse(data);
+    // Check if file exists first
+    if (fs.existsSync(linksFilePath)) {
+      console.log('Found links.json file, attempting to read');
+      const data = await fs.promises.readFile(linksFilePath, 'utf8');
+      try {
+        const parsedData = JSON.parse(data);
+        if (parsedData && parsedData.categories && parsedData.categories.length > 0) {
+          console.log(`Successfully loaded links.json with ${parsedData.categories.length} categories`);
+          return parsedData;
+        } else {
+          console.warn('links.json file exists but has no categories or invalid format');
+        }
+      } catch (parseError) {
+        console.error('Error parsing links.json data:', parseError);
+      }
+    } else {
+      console.warn(`Primary links file not found at path: ${linksFilePath}`);
+    }
+    
+    // If we get here, try the links-updated.json file as fallback
+    if (fs.existsSync(linksUpdatedFilePath)) {
+      console.log('Trying links-updated.json as fallback');
+      const data = await fs.promises.readFile(linksUpdatedFilePath, 'utf8');
+      try {
+        const parsedData = JSON.parse(data);
+        if (parsedData && parsedData.categories && parsedData.categories.length > 0) {
+          console.log(`Successfully loaded links-updated.json with ${parsedData.categories.length} categories`);
+          return parsedData;
+        } else {
+          console.warn('links-updated.json file exists but has no categories or invalid format');
+        }
+      } catch (parseError) {
+        console.error('Error parsing links-updated.json data:', parseError);
+      }
+    } else {
+      console.error(`Fallback links file not found at path: ${linksUpdatedFilePath}`);
+    }
+    
+    // If we get here, both files failed
+    console.error('Could not load links data from any source');
+    return { categories: [] };
   } catch (error) {
-    console.error('Error loading links data:', error);
+    console.error('Unexpected error loading links data:', error);
     return { categories: [] };
   }
 }
@@ -107,12 +154,38 @@ function getCategoriesAndSubcategories(data: any) {
 export async function POST(request: Request) {
   try {
     // Parse the request body
-    const body = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch (parseError) {
+      console.error('Error parsing request body:', parseError);
+      return NextResponse.json(
+        { error: 'Invalid request format' },
+        { status: 400 }
+      );
+    }
+    
     const { action, query, category, subcategory } = body;
+    console.log(`Assistant API called with action: ${action}, query: ${query || 'none'}`);
+    
+    // Validate action
+    if (!action) {
+      console.error('No action specified in request');
+      return NextResponse.json(
+        { error: 'Action is required' },
+        { status: 400 }
+      );
+    }
     
     // Load links data
     const linksData = await loadLinksData();
+    if (!linksData.categories || linksData.categories.length === 0) {
+      console.warn('No categories found in links data');
+    }
+    
     const allLinks = extractAllLinks(linksData);
+    console.log(`Extracted ${allLinks.length} total links from data`);
+    
     
     // Process based on action
     let result: any[] | { categories: string[], subcategories: { [key: string]: string[] } };

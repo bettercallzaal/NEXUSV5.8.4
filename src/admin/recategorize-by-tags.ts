@@ -7,8 +7,30 @@
 
 import fs from 'fs';
 import path from 'path';
-import { Link } from '../types/links';
 import { loadLinksData, saveLinksData } from './utils/links-data-utils';
+
+// Define types locally to avoid import issues
+interface Link {
+  id: string;
+  title: string;
+  url: string;
+  description: string;
+  tags?: string[];
+  isNew?: boolean;
+  isOfficial?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+interface Subcategory {
+  name: string;
+  links: Link[];
+}
+
+interface Category {
+  name: string;
+  subcategories: Subcategory[];
+}
 
 interface RecategorizationOptions {
   tagMappingFile: string;
@@ -139,14 +161,14 @@ export async function recategorizeByTags(options: RecategorizationOptions): Prom
           
           if (shouldApply) {
             // Remove from current location
-            const linkIndex = subcategory.links.findIndex(l => l.id === link.id);
+            const linkIndex = subcategory.links.findIndex((l: Link) => l.id === link.id);
             if (linkIndex >= 0) {
               subcategory.links.splice(linkIndex, 1);
             }
             
             // Find or create target category
             let targetCategory = linksData.categories.find(
-              c => c.name.toLowerCase() === suggestedCategory.toLowerCase()
+              (c: Category) => c.name.toLowerCase() === suggestedCategory.toLowerCase()
             );
             
             if (!targetCategory) {
@@ -159,7 +181,7 @@ export async function recategorizeByTags(options: RecategorizationOptions): Prom
             
             // Find or create target subcategory
             let targetSubcategory = targetCategory.subcategories.find(
-              s => s.name.toLowerCase() === suggestedSubcategory.toLowerCase()
+              (s: Subcategory) => s.name.toLowerCase() === suggestedSubcategory.toLowerCase()
             );
             
             if (!targetSubcategory) {
@@ -190,13 +212,13 @@ export async function recategorizeByTags(options: RecategorizationOptions): Prom
     // Remove empty subcategories
     for (const category of linksData.categories) {
       category.subcategories = category.subcategories.filter(
-        subcategory => subcategory.links.length > 0
+        (subcategory: Subcategory) => subcategory.links.length > 0
       );
     }
     
     // Remove empty categories
     linksData.categories = linksData.categories.filter(
-      category => category.subcategories.length > 0
+      (category: Category) => category.subcategories.length > 0
     );
     
     // Save the updated data

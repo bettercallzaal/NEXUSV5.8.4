@@ -4,8 +4,29 @@
  * Helper functions for generating and managing tags for links.
  */
 
-import { Link } from '../../types/links';
-import { TaggingRequest, TaggingResponse } from '../../types/tagging';
+// Define types locally to avoid import issues
+interface Link {
+  id: string;
+  title: string;
+  url: string;
+  description: string;
+  tags?: string[];
+  isNew?: boolean;
+  isOfficial?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+interface TaggingRequest {
+  title: string;
+  description: string;
+  url: string;
+  existingTags: string[];
+}
+
+interface TaggingResponse {
+  suggestedTags: string[];
+}
 
 /**
  * Generate tags for a link using the AI tagging API

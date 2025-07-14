@@ -22,9 +22,23 @@ export interface Category {
   subcategories: Subcategory[];
 }
 
-export interface Data {
+export interface LinksData {
   categories: Category[];
 }
 
-// Alias for backward compatibility
-export type LinksData = Data;
+export interface SubcategoryWithCount {
+  name: string;
+  count: number;
+}
+
+export interface CategoryWithCount {
+  name: string;
+  count: number;
+  subcategories: SubcategoryWithCount[];
+}
+
+export interface LinkSearchResult extends Link {
+  category: string;
+  subcategory: string;
+  relevanceScore?: number;
+}

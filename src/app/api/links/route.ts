@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { Data, Link } from '@/types/links';
+import { LinksData, Link } from '@/types/links';
 
 // Helper function to load links data
-async function loadLinksData(dataset = 'default'): Promise<Data> {
-  let linksData: Data;
+async function loadLinksData(dataset = 'default'): Promise<LinksData> {
+  let linksData: LinksData;
   
   if (dataset === 'large') {
     // Try to load the large dataset
@@ -36,7 +36,7 @@ async function loadLinksData(dataset = 'default'): Promise<Data> {
 }
 
 // Helper function to save links data
-async function saveLinksData(data: Data, dataset = 'default'): Promise<void> {
+async function saveLinksData(data: LinksData, dataset = 'default'): Promise<void> {
   const filePath = path.join(process.cwd(), 'src', 'data', dataset === 'large' ? 'links-large.json' : 'links.json');
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
 }

@@ -3,10 +3,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useScrollLock } from "@/hooks/useScrollLock";
 import Fuse from "fuse.js";
-import { ExternalLink, Grid2X2, List as ListIcon, Loader2, Share, Copy, Clock, CheckCircle, AlignJustify } from "lucide-react";
+import { ExternalLink, Grid2X2, List as ListIcon, Loader2, Share, Copy, Clock, CheckCircle, AlignJustify, FolderTree, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LinkCard } from "@/components/links/link-card";
 import { LinkRow } from "@/components/links/link-row";
+import { Badge } from "@/components/ui/badge";
+import { CollapsibleLinkTree } from "@/components/links/collapsible-link-tree";
 
 import { cn } from "@/lib/utils";
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -15,40 +17,13 @@ import { CategoryScroll } from "@/components/links/category-scroll";
 import { EnhancedSearch } from "@/components/links/enhanced-search";
 import { toast } from "sonner";
 
-// Define types for our data structure
-interface Link {
-  id?: string;
-  title: string;
-  url: string;
-  description: string;
-  category?: string;
-  subcategory?: string;
-  tags?: string[];
-  isNew?: boolean;
-  isOfficial?: boolean;
-  createdAt?: string;
-  updatedAt?: string;
-}
+// Import types from our types file
+import { Link, Category, LinksData, CategoryWithCount, SubcategoryWithCount } from "@/types/links";
 
-interface Subcategory {
-  name: string;
-  links: Link[];
-}
-
-interface Category {
-  name: string;
-  subcategories: Subcategory[];
-}
-
-interface SubcategoryWithCount {
+// Define interface for tag with count
+interface TagWithCount {
   name: string;
   count: number;
-}
-
-interface CategoryWithCount {
-  name: string;
-  count: number;
-  subcategories: SubcategoryWithCount[];
 }
 
 interface Data {
@@ -57,157 +32,44 @@ interface Data {
 
 interface MobileOptimizedLinkListProps {
   data: Data;
-  filterTags?: string[];
+  onLinkClick?: (link: Link) => void;
+  logEvent?: (eventName: string, eventData?: Record<string, any>) => void;
 }
 
-type ViewMode = "grid" | "list" | "compact";
-type SortMode = "newest" | "oldest" | "popular" | "az";
+type ViewMode = "grid" | "list" | "compact" | "tree";
 
-interface FlattenedLink extends Link {
+type FlattenedLink = Link & {
   category: string;
   subcategory: string;
-  id?: string;
-  tags?: string[];
-  isNew?: boolean;
-  isOfficial?: boolean;
-  popularity?: number; // For sorting by popularity
-}
-
-// Telemetry logging hook
-const useLogEvent = () => {
-  return useCallback((eventName: string, metadata: Record<string, any> = {}) => {
-    // In a real implementation, this would send data to your telemetry endpoint
-    console.log(`[TELEMETRY] ${eventName}`, metadata);
-    
-    // Example implementation that would send to a real endpoint:
-    /*
-    fetch('/api/telemetry', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        event: eventName,
-        timestamp: new Date().toISOString(),
-        metadata
-      })
-    }).catch(err => console.error('Telemetry error:', err));
-    */
-  }, []);
 };
 
-export function MobileOptimizedLinkList({ data, filterTags = [] }: MobileOptimizedLinkListProps) {
-  // Main state
+type SortOption = "newest" | "oldest" | "popular" | "az";
+
+export function MobileOptimizedLinkList({ 
+  data, 
+  onLinkClick,
+  logEvent = () => {}
+}: MobileOptimizedLinkListProps) {
+  // State for view mode (grid, list, compact, tree)
+  const [viewMode, setViewMode] = useState<ViewMode>("tree");
+  
+  // State for search and filters
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
-  const [selectedTags, setSelectedTags] = useState<string[]>(filterTags || []);
-  const [viewMode, setViewMode] = useState<ViewMode>("compact");
-  const [sortBy, setSortBy] = useState<SortMode>("newest");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [sortBy, setSortBy] = useState<SortOption>("newest");
   const [newOnly, setNewOnly] = useState(false);
   const [officialOnly, setOfficialOnly] = useState(false);
   
-  // UI state
-  const [isLoading, setIsLoading] = useState(false);
-  const [overscanCount, setOverscanCount] = useState(5);
-  const [itemsPerRow, setItemsPerRow] = useState(4);
+  // State for expanded items in list view
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   
-  // Refs
+  // Refs for UI interactions
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isContainerFocused, setIsContainerFocused] = useState(false);
   
-  // Telemetry logging
-  const logEvent = useLogEvent();
-  
-  // Use the scroll lock hook for better mobile scrolling
-  const { registerScrollable, lockScroll, unlockScroll } = useScrollLock();
-  
-  // Register the container for scroll locking when it's mounted
-  useEffect(() => {
-    if (containerRef.current) {
-      registerScrollable(containerRef.current);
-    }
-  }, [registerScrollable]);
-  
-  // Handle focus management for keyboard accessibility
-  const handleContainerFocus = useCallback(() => {
-    if (containerRef.current) {
-      // When container receives focus, ensure proper tab navigation
-      containerRef.current.setAttribute('tabindex', '0');
-    }
-  }, []);
-  
-  const handleContainerBlur = useCallback(() => {
-    if (containerRef.current) {
-      // Reset tabindex when focus leaves the container
-      containerRef.current.setAttribute('tabindex', '-1');
-    }
-  }, []);
-  
-  // Handle scroll events for the virtualized list
-  const handleScroll = useCallback(({ scrollOffset, scrollDirection }: { scrollOffset: number; scrollDirection: "forward" | "backward" }) => {
-    // This function can be used to track scroll position in the virtualized list if needed
-    // We can add scroll position tracking here if needed in the future
-  }, []);
-  
-  // Handle scroll events for the container
-  const handleDivScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    // Prevent scroll events from bubbling up to avoid unwanted behavior
-    event.stopPropagation();
-  }, []);
-  
-  // Simulate loading state for better UX
-  useEffect(() => {
-    setIsLoading(true);
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, []);
-  
-  // Register the container as a scrollable element
-  useEffect(() => {
-    if (containerRef.current) {
-      const cleanup = registerScrollable(containerRef.current);
-      return cleanup;
-    }
-  }, [registerScrollable]);
-  
-  // Update items per row based on screen width
-  useEffect(() => {
-    const handleResize = () => {
-      const width = window.innerWidth;
-      if (width < 640) {
-        setItemsPerRow(1); // Mobile
-        // Ensure compact view on small screens for better usability
-        if (viewMode !== "compact") {
-          setViewMode("compact");
-        }
-      } else if (width < 1024) {
-        setItemsPerRow(2); // Tablet
-      } else if (width < 1440) {
-        setItemsPerRow(3); // Desktop
-      } else {
-        setItemsPerRow(4); // Large Desktop
-      }
-    };
-
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [viewMode]);
-  
-  // Increase overscan when scrolling for smoother experience
-  useEffect(() => {
-    const handleScroll = () => {
-      setOverscanCount(10);
-      const scrollTimer = setTimeout(() => setOverscanCount(5), 500);
-      return () => clearTimeout(scrollTimer);
-    };
-    
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  // Create a flattened array of all links for searching and virtualization
+  // Flatten the nested data structure for easier filtering and searching
   const allLinks = useMemo(() => {
     const links: FlattenedLink[] = [];
     
@@ -218,8 +80,6 @@ export function MobileOptimizedLinkList({ data, filterTags = [] }: MobileOptimiz
             ...link,
             category: category.name,
             subcategory: subcategory.name,
-            // Generate random popularity for demo purposes
-            popularity: Math.floor(Math.random() * 100)
           });
         });
       });
@@ -227,373 +87,316 @@ export function MobileOptimizedLinkList({ data, filterTags = [] }: MobileOptimiz
     
     return links;
   }, [data]);
-
-  // Extract all unique tags from links
+  
+  // Calculate category counts for filters
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, CategoryWithCount> = {};
+    
+    data.categories.forEach((category) => {
+      const subcategoryCounts: SubcategoryWithCount[] = [];
+      let totalCount = 0;
+      
+      category.subcategories.forEach((sub) => {
+        const count = sub.links.length;
+        totalCount += count;
+        
+        subcategoryCounts.push({
+          name: sub.name,
+          count
+        });
+      });
+      
+      counts[category.name] = {
+        name: category.name,
+        count: totalCount,
+        subcategories: subcategoryCounts
+      };
+    });
+    
+    return counts;
+  }, [data]);
+  
+  // Extract all unique tags with counts
   const allTags = useMemo(() => {
     const tagCounts: Record<string, number> = {};
     
     allLinks.forEach((link) => {
-      if (link.tags) {
+      if (link.tags && link.tags.length > 0) {
         link.tags.forEach((tag) => {
           tagCounts[tag] = (tagCounts[tag] || 0) + 1;
         });
       }
     });
     
-    return Object.entries(tagCounts).map(([name, count]) => ({ name, count }));
+    return Object.entries(tagCounts).map(([name, count]) => ({
+      name,
+      count
+    })).sort((a, b) => b.count - a.count);
   }, [allLinks]);
-
-  // Create category counts for filtering UI
-  const categoryCounts = useMemo(() => {
-    const counts: Record<string, CategoryWithCount> = {};
-    
-    allLinks.forEach((link) => {
-      // Initialize category if it doesn't exist
-      if (!counts[link.category]) {
-        counts[link.category] = {
-          name: link.category,
-          count: 0,
-          subcategories: []
-        };
-      }
-      
-      // Increment category count
-      counts[link.category].count++;
-      
-      // Find subcategory
-      const subIndex = counts[link.category].subcategories.findIndex(
-        (sub) => sub.name === link.subcategory
-      );
-      
-      if (subIndex === -1) {
-        // Add new subcategory
-        counts[link.category].subcategories.push({
-          name: link.subcategory,
-          count: 1
-        });
-      } else {
-        // Increment subcategory count
-        counts[link.category].subcategories[subIndex].count++;
-      }
+  
+  // Setup search with Fuse.js
+  const fuse = useMemo(() => {
+    return new Fuse(allLinks, {
+      keys: [
+        { name: 'title', weight: 2 },
+        { name: 'description', weight: 1 },
+        { name: 'category', weight: 0.5 },
+        { name: 'subcategory', weight: 0.5 },
+        { name: 'tags', weight: 0.5 }
+      ],
+      threshold: 0.3,
+      includeScore: true
     });
-    
-    return counts;
   }, [allLinks]);
-
-  // Filter links based on search query, category, subcategory, and tags
+  
+  // Apply filters and search to links
   const filteredLinks = useMemo(() => {
-    let filtered = [...allLinks];
+    let result = [...allLinks];
     
-    // Filter by category
+    // Apply category filter
     if (selectedCategory) {
-      filtered = filtered.filter((link) => link.category === selectedCategory);
-    }
-    
-    // Filter by subcategory
-    if (selectedSubcategory) {
-      filtered = filtered.filter((link) => link.subcategory === selectedSubcategory);
-    }
-    
-    // Filter by tags
-    if (selectedTags.length > 0) {
-      filtered = filtered.filter((link) => {
-        return selectedTags.every((tag) => link.tags?.includes(tag));
-      });
-    }
-    
-    // Filter by new only
-    if (newOnly) {
-      filtered = filtered.filter((link) => link.isNew);
-    }
-    
-    // Filter by official only
-    if (officialOnly) {
-      filtered = filtered.filter((link) => link.tags?.includes('Official'));
-    }
-    
-    // Search by query
-    if (searchQuery) {
-      const fuse = new Fuse(filtered, {
-        keys: ['title', 'description', 'category', 'subcategory', 'tags'],
-        threshold: 0.4,
-        ignoreLocation: true
-      });
+      result = result.filter(link => link.category === selectedCategory);
       
-      const results = fuse.search(searchQuery);
-      filtered = results.map((result) => result.item);
+      // Apply subcategory filter if a category is selected
+      if (selectedSubcategory) {
+        result = result.filter(link => link.subcategory === selectedSubcategory);
+      }
     }
     
-    // Sort links
+    // Apply tag filters
+    if (selectedTags.length > 0) {
+      result = result.filter(link => {
+        if (!link.tags || link.tags.length === 0) return false;
+        return selectedTags.every(tag => link.tags!.includes(tag));
+      });
+    }
+    
+    // Apply new only filter
+    if (newOnly) {
+      result = result.filter(link => link.isNew);
+    }
+    
+    // Apply official only filter
+    if (officialOnly) {
+      result = result.filter(link => link.isOfficial);
+    }
+    
+    // Apply search query
+    if (searchQuery.trim()) {
+      const searchResults = fuse.search(searchQuery);
+      result = searchResults.map(res => res.item);
+    }
+    
+    // Apply sorting
     switch (sortBy) {
-      case 'newest':
-        filtered.sort((a, b) => {
-          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return dateB - dateA;
+      case "newest":
+        result.sort((a, b) => {
+          if (a.createdAt && b.createdAt) {
+            return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          }
+          return 0;
         });
         break;
-      case 'oldest':
-        filtered.sort((a, b) => {
-          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return dateA - dateB;
+      case "oldest":
+        result.sort((a, b) => {
+          if (a.createdAt && b.createdAt) {
+            return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+          }
+          return 0;
         });
         break;
-      case 'popular':
-        filtered.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+      case "popular":
+        // Placeholder for popularity sorting - would need a popularity metric
+        result.sort((a, b) => 0); // No-op sort as placeholder
         break;
-      case 'az':
-        filtered.sort((a, b) => a.title.localeCompare(b.title));
+      case "az":
+        result.sort((a, b) => a.title.localeCompare(b.title));
         break;
     }
     
-    return filtered;
-  }, [allLinks, searchQuery, selectedCategory, selectedSubcategory, selectedTags, sortBy, newOnly, officialOnly]);
-
+    return result;
+  }, [allLinks, selectedCategory, selectedSubcategory, selectedTags, newOnly, officialOnly, searchQuery, fuse, sortBy]);
+  
+  // Handle search input
+  const handleSearch = useCallback((query: string) => {
+    setSearchQuery(query);
+    logEvent("search", { query });
+  }, [logEvent]);
+  
   // Handle category selection
   const handleCategorySelect = useCallback((category: string) => {
-    setSelectedCategory(category || null);
-    setSelectedSubcategory(null);
-    logEvent('category_select', { category });
-  }, [logEvent]);
-
+    if (category === selectedCategory) {
+      setSelectedCategory(null);
+      setSelectedSubcategory(null);
+    } else {
+      setSelectedCategory(category);
+      setSelectedSubcategory(null);
+    }
+    logEvent("filter_category", { category });
+  }, [selectedCategory, logEvent]);
+  
   // Handle subcategory selection
   const handleSubcategorySelect = useCallback((subcategory: string) => {
-    setSelectedSubcategory(subcategory || null);
-    logEvent('subcategory_select', { subcategory });
-  }, [logEvent]);
-
+    if (subcategory === selectedSubcategory) {
+      setSelectedSubcategory(null);
+    } else {
+      setSelectedSubcategory(subcategory);
+    }
+    logEvent("filter_subcategory", { subcategory });
+  }, [selectedSubcategory, logEvent]);
+  
   // Handle tag selection
   const handleTagSelect = useCallback((tag: string) => {
-    setSelectedTags((prev) => {
-      const isSelected = prev.includes(tag);
-      const newTags = isSelected
-        ? prev.filter((t) => t !== tag)
-        : [...prev, tag];
-      
-      logEvent('tag_select', { tag, selected: !isSelected });
-      return newTags;
+    setSelectedTags(prev => {
+      if (prev.includes(tag)) {
+        return prev.filter(t => t !== tag);
+      } else {
+        return [...prev, tag];
+      }
     });
+    logEvent("filter_tag", { tag });
   }, [logEvent]);
-
+  
   // Handle sort change
   const handleSortChange = useCallback((sort: string) => {
-    setSortBy(sort as SortMode);
-    logEvent('sort_change', { sort });
+    setSortBy(sort as SortOption);
+    logEvent("sort_changed", { sort });
   }, [logEvent]);
-
-  // Handle new only change
+  
+  // Handle new only filter
   const handleNewOnlyChange = useCallback((checked: boolean) => {
     setNewOnly(checked);
-    logEvent('filter_change', { filter: 'new_only', value: checked });
+    logEvent("filter_new_only", { checked });
   }, [logEvent]);
-
-  // Handle official only change
+  
+  // Handle official only filter
   const handleOfficialOnlyChange = useCallback((checked: boolean) => {
     setOfficialOnly(checked);
-    logEvent('filter_change', { filter: 'official_only', value: checked });
+    logEvent("filter_official_only", { checked });
   }, [logEvent]);
-
+  
   // Clear all filters
   const clearFilters = useCallback(() => {
-    setSearchQuery("");
     setSelectedCategory(null);
     setSelectedSubcategory(null);
     setSelectedTags([]);
     setNewOnly(false);
     setOfficialOnly(false);
     setSortBy("newest");
-    logEvent('clear_filters');
+    setSearchQuery("");
+    logEvent("clear_filters");
   }, [logEvent]);
-
-  // Handle search
-  const handleSearch = useCallback((query: string) => {
-    setSearchQuery(query);
-    if (query) {
-      logEvent('search', { query });
-    }
-  }, [logEvent]);
-
+  
   // Handle link click
-  const handleLinkClick = useCallback((link: FlattenedLink | { id?: string; title: string; url: string; category?: string; subcategory?: string }) => {
-    logEvent('link_click', { 
-      linkId: link.id, 
-      title: link.title,
-      category: link.category,
-      subcategory: link.subcategory
-    });
-    window.open(link.url, '_blank', 'noopener,noreferrer');
-  }, [logEvent]);
-
+  const handleLinkClick = useCallback((link: Link) => {
+    if (onLinkClick) {
+      onLinkClick(link);
+    } else {
+      window.open(link.url, "_blank", "noopener,noreferrer");
+    }
+    logEvent("link_clicked", { title: link.title, url: link.url });
+  }, [onLinkClick, logEvent]);
+  
   // Handle share link
-  const handleShareLink = useCallback((e: React.MouseEvent, link: FlattenedLink) => {
+  const handleShareLink = useCallback((e: React.MouseEvent, link: Link) => {
     e.stopPropagation();
-    logEvent('share_click', { linkId: link.id, title: link.title });
+    e.preventDefault();
     
     if (navigator.share) {
       navigator.share({
         title: link.title,
         text: link.description,
         url: link.url
-      }).catch(err => console.error('Error sharing:', err));
+      }).catch(() => {
+        navigator.clipboard.writeText(link.url);
+        toast("Link copied to clipboard", {
+          icon: <Copy className="h-4 w-4" />
+        });
+      });
     } else {
-      // Fallback to copy
-      handleCopyLink(e, link);
+      navigator.clipboard.writeText(link.url);
+      toast("Link copied to clipboard", {
+        icon: <Copy className="h-4 w-4" />
+      });
     }
-  }, [logEvent]);
-
-  // Handle copy link
-  const handleCopyLink = useCallback((e: React.MouseEvent, link: FlattenedLink) => {
-    e.stopPropagation();
-    logEvent('copy_link', { linkId: link.id, title: link.title });
     
-    navigator.clipboard.writeText(link.url).then(() => {
-      toast("Link copied to clipboard");
-    }).catch(err => console.error('Error copying:', err));
+    logEvent("share_link", { title: link.title });
   }, [logEvent]);
-
-  // Handle toggle expand
+  
+  // Handle copy link
+  const handleCopyLink = useCallback((e: React.MouseEvent, link: Link) => {
+    e.stopPropagation();
+    e.preventDefault();
+    
+    navigator.clipboard.writeText(link.url);
+    toast("Link copied to clipboard", {
+      icon: <Copy className="h-4 w-4" />
+    });
+    
+    logEvent("copy_link", { title: link.title });
+  }, [logEvent]);
+  
+  // Handle toggle expand for list items
   const handleToggleExpand = useCallback((id: string) => {
-    setExpandedItems((prev) => {
+    setExpandedItems(prev => {
       const newSet = new Set(prev);
       if (newSet.has(id)) {
         newSet.delete(id);
-        logEvent('collapse_link', { linkId: id });
       } else {
         newSet.add(id);
-        logEvent('expand_link', { linkId: id });
       }
       return newSet;
     });
-  }, [logEvent]);
-
-  // Render selected tags
-  const renderSelectedTags = useCallback(() => {
-    if (selectedTags.length === 0) return null;
-    
-    return (
-      <div className="flex flex-wrap gap-2 mb-4 items-center">
-        <span className="text-sm font-medium">Selected tags:</span>
-        {selectedTags.map((tag) => (
-          <Button
-            key={tag}
-            variant="secondary"
-            size="sm"
-            className="h-7 px-2 py-0 text-xs flex items-center gap-1"
-            onClick={() => handleTagSelect(tag)}
-          >
-            {tag}
-            <span className="ml-1">×</span>
-          </Button>
-        ))}
-        {selectedTags.length > 0 && (
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={() => setSelectedTags([])} 
-            className="h-6 text-xs"
-          >
-            Clear tags
-          </Button>
-        )}
-      </div>
-    );
-  }, [selectedTags, handleTagSelect]);
+  }, []);
   
-  // Render grid item
-  const renderGridItem = useCallback(({ index, style }: { index: number, style: React.CSSProperties }) => {
-    const link = filteredLinks[index];
+  // Handle container focus for keyboard navigation
+  const handleContainerFocus = useCallback(() => {
+    setIsContainerFocused(true);
+  }, []);
+  
+  const handleContainerBlur = useCallback(() => {
+    setIsContainerFocused(false);
+  }, []);
+  
+  // Render compact view
+  const renderCompactView = useCallback(() => {
     return (
-      <div className="p-3" key={link.id || index}>
-        <LinkCard 
-          title={link.title}
-          description={link.description}
-          url={link.url}
-          category={link.category}
-          subcategory={link.subcategory}
-          tags={link.tags}
-          isNew={link.isNew}
-          onClick={() => handleLinkClick(link)}
-          className="h-full transition-all border border-border/40 rounded-md overflow-hidden"
-        />
+      <div className="space-y-2">
+        {filteredLinks.map((link, index) => (
+          <div 
+            key={link.id || index}
+            className="p-2 bg-secondary/20 rounded-md hover:bg-secondary/40 transition-colors"
+            role="button"
+            tabIndex={0}
+            onClick={() => handleLinkClick(link)}
+            onKeyDown={(e) => e.key === "Enter" && handleLinkClick(link)}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex-1">
+                <h3 className="font-medium text-sm">{link.title}</h3>
+                <p className="text-xs text-muted-foreground truncate">{link.description}</p>
+              </div>
+              <Button variant="ghost" size="icon" className="shrink-0">
+                <ExternalLink className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        ))}
       </div>
     );
   }, [filteredLinks, handleLinkClick]);
-
-  // Render list item
-  const renderListItem = useCallback(({ index, style }: { index: number, style: React.CSSProperties }) => {
-    const link = filteredLinks[index];
+  
+  // Render tree view
+  const renderTreeView = useCallback(() => {
     return (
-      <div className="px-3 py-2" key={link.id || index}>
-        <LinkRow 
-          title={link.title}
-          description={link.description}
-          url={link.url}
-          category={link.category}
-          subcategory={link.subcategory}
-          tags={link.tags}
-          isNew={link.isNew}
-          className="border border-border/40 rounded-md p-3 hover:bg-accent/30 transition-colors"
-          isExpanded={link.id ? expandedItems.has(link.id) : false}
-          onToggleExpand={() => link.id && handleToggleExpand(link.id)}
-        >
-          {link.id && expandedItems.has(link.id) && (
-            <div className="mt-3 animate-fade-in flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={(e: React.MouseEvent) => handleShareLink(e, link)}
-              >
-                <Share className="mr-1 h-3 w-3" /> Share
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={(e: React.MouseEvent) => handleCopyLink(e, link)}
-              >
-                <Copy className="mr-1 h-3 w-3" /> Copy URL
-              </Button>
-            </div>
-          )}
-        </LinkRow>
-      </div>
+      <CollapsibleLinkTree 
+        data={data} 
+        onLinkClick={handleLinkClick} 
+        searchQuery={searchQuery}
+      />
     );
-  }, [filteredLinks, expandedItems, handleToggleExpand, handleShareLink, handleCopyLink]);
-
-  // Render recently viewed links
-  const renderRecentlyViewed = useCallback(() => {
-    // In a real implementation, this would come from localStorage or a backend
-    const recentlyViewed = allLinks.slice(0, 5);
-    
-    if (recentlyViewed.length === 0) return null;
-    
-    return (
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-medium flex items-center gap-1">
-            <Clock className="h-4 w-4" />
-            Recently Viewed
-          </h3>
-          <Button variant="ghost" size="sm" className="h-7 text-xs">
-            View all
-          </Button>
-        </div>
-        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-primary/20 scrollbar-track-transparent">
-          {recentlyViewed.map((link, index) => (
-            <div 
-              key={link.id || index} 
-              className="flex-shrink-0 w-[200px] border rounded-md p-3 bg-card hover:bg-accent cursor-pointer"
-              onClick={() => handleLinkClick(link)}
-            >
-              <h4 className="font-medium text-sm truncate mb-1">{link.title}</h4>
-              <p className="text-xs text-muted-foreground truncate">{link.description}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }, [allLinks, handleLinkClick]);
-
+  }, [data, handleLinkClick, searchQuery]);
+  
   return (
     <TooltipProvider>
       <div className="w-full">
@@ -636,93 +439,94 @@ export function MobileOptimizedLinkList({ data, filterTags = [] }: MobileOptimiz
                   officialOnly={officialOnly}
                 />
                 
-                <div className="filter-buttons bg-accent/20 p-4 rounded-lg mb-4">
+                <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         variant={viewMode === "grid" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setViewMode("grid")}
-                        className="flex items-center gap-1"
+                        size="icon"
+                        onClick={() => {
+                          setViewMode("grid");
+                          logEvent("view_mode_changed", { mode: "grid" });
+                        }}
                       >
                         <Grid2X2 className="h-4 w-4" />
-                        <span className="hidden sm:inline text-xs">Grid</span>
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p>Grid View - Card layout with images</p>
-                    </TooltipContent>
+                    <TooltipContent>Grid View</TooltipContent>
                   </Tooltip>
-                  
+                </TooltipProvider>
+                
+                <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         variant={viewMode === "list" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setViewMode("list")}
-                        className="flex items-center gap-1"
+                        size="icon"
+                        onClick={() => {
+                          setViewMode("list");
+                          logEvent("view_mode_changed", { mode: "list" });
+                        }}
                       >
                         <ListIcon className="h-4 w-4" />
-                        <span className="hidden sm:inline text-xs">List</span>
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p>List View - Detailed rows with descriptions</p>
-                    </TooltipContent>
+                    <TooltipContent>List View</TooltipContent>
                   </Tooltip>
-                  
+                </TooltipProvider>
+                
+                <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         variant={viewMode === "compact" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setViewMode("compact")}
-                        className="flex items-center gap-1"
+                        size="icon"
+                        onClick={() => {
+                          setViewMode("compact");
+                          logEvent("view_mode_changed", { mode: "compact" });
+                        }}
                       >
                         <AlignJustify className="h-4 w-4" />
-                        <span className="hidden sm:inline text-xs">Compact</span>
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p>Compact View - Dense list for maximum items</p>
-                    </TooltipContent>
+                    <TooltipContent>Compact View</TooltipContent>
                   </Tooltip>
-                </div>
+                </TooltipProvider>
+                
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant={viewMode === "tree" ? "default" : "outline"}
+                        size="icon"
+                        onClick={() => {
+                          setViewMode("tree");
+                          logEvent("view_mode_changed", { mode: "tree" });
+                        }}
+                      >
+                        <FolderTree className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Tree View</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
             </div>
-            
-            {/* Horizontal category navigation */}
-            <CategoryScroll
-              categoryCounts={categoryCounts}
-              selectedCategory={selectedCategory}
-              selectedSubcategory={selectedSubcategory}
-              onCategorySelect={handleCategorySelect}
-              onSubcategorySelect={handleSubcategorySelect}
-            />
           </div>
+          
+          {/* Horizontal category navigation */}
+          <CategoryScroll
+            categoryCounts={categoryCounts}
+            selectedCategory={selectedCategory}
+            selectedSubcategory={selectedSubcategory}
+            onCategorySelect={handleCategorySelect}
+            onSubcategorySelect={handleSubcategorySelect}
+          />
         </div>
         
-        {/* Selected tags */}
-        {renderSelectedTags()}
-        
-        {/* Recently viewed links */}
-        {!searchQuery && !selectedCategory && !selectedTags.length && renderRecentlyViewed()}
-        
-        {/* Results count */}
-        <div className="text-sm text-muted-foreground mb-4">
-          {filteredLinks.length} {filteredLinks.length === 1 ? 'result' : 'results'} found
-        </div>
-        
-        {/* Results */}
-        {isLoading ? (
-          <div className="flex h-[400px] w-full items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        ) : filteredLinks.length === 0 ? (
-          <div className="flex h-[400px] w-full flex-col items-center justify-center space-y-4 rounded-lg border border-dashed p-8 text-center">
-            <div className="rounded-full bg-secondary p-3">
-              <ExternalLink className="h-6 w-6 text-muted-foreground" />
-            </div>
+        {/* Content area */}
+        {filteredLinks.length === 0 && searchQuery.trim() !== "" ? (
+          <div className="flex flex-col items-center justify-center py-12 space-y-4 text-center">
             <h3 className="font-heading text-xl font-medium">No links found</h3>
             <p className="text-muted-foreground">
               Try adjusting your search or filters to find what you're looking for.
@@ -731,6 +535,10 @@ export function MobileOptimizedLinkList({ data, filterTags = [] }: MobileOptimiz
               Clear all filters
             </Button>
           </div>
+        ) : viewMode === "tree" ? (
+          renderTreeView()
+        ) : viewMode === "compact" ? (
+          renderCompactView()
         ) : (
           <div 
             ref={containerRef}

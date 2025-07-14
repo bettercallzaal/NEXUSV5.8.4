@@ -137,8 +137,7 @@ export default function Home() {
         // Extract the default export and ensure it conforms to the Data interface
         const data = jsonData.default;
         setLinksData({
-          categories: data.categories || [],
-          links: data.links || []
+          categories: data.categories || []
         });
       } finally {
         setLoading(false);

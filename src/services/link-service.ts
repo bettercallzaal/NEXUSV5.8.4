@@ -36,7 +36,18 @@ export class LinkService {
       }
 
       const data = await response.json();
-      return data.links || [];
+      
+      // Extract links from all categories and subcategories
+      const allLinks: Link[] = [];
+      if (data.categories) {
+        for (const category of data.categories) {
+          for (const subcategory of category.subcategories) {
+            allLinks.push(...subcategory.links);
+          }
+        }
+      }
+      
+      return allLinks;
     } catch (error) {
       console.error('Error fetching links:', error);
       throw error;

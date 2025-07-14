@@ -27,9 +27,9 @@ async function loadLinksData(dataset = 'default'): Promise<Data> {
     linksData = JSON.parse(fileContent);
   }
   
-  // Ensure links array exists
-  if (!linksData.links) {
-    linksData.links = [];
+  // Ensure categories array exists
+  if (!linksData.categories) {
+    linksData.categories = [];
   }
   
   return linksData;
@@ -80,19 +80,8 @@ export async function POST(request: NextRequest) {
     const dataset = request.nextUrl.searchParams.get('dataset') || 'default';
     const linksData = await loadLinksData(dataset);
     
-    // First check if the link exists in the top-level links array (for backward compatibility)
+    // Check if the link exists in any category/subcategory
     let existingLinkFound = false;
-    const existingLinkIndex = linksData.links.findIndex(l => l.id === link.id);
-    
-    if (existingLinkIndex >= 0) {
-      // Update existing link in the top-level links array
-      linksData.links[existingLinkIndex] = {
-        ...linksData.links[existingLinkIndex],
-        ...link,
-        updatedAt: new Date().toISOString()
-      };
-      existingLinkFound = true;
-    }
 
     // Find or create the category
     let category = linksData.categories.find(c => c.name.toLowerCase() === link.category.toLowerCase());
@@ -150,10 +139,7 @@ export async function POST(request: NextRequest) {
       
       subcategory.links.push(newLink);
       
-      // Also add to top-level links array for backward compatibility
-      linksData.links.push({
-        ...newLink
-      });
+      // No need to add to a top-level links array as it no longer exists
     }
     
     // Save updated data

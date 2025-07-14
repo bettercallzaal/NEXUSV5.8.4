@@ -112,8 +112,24 @@ export async function batchImportLinks(options: BatchImportOptions): Promise<Bat
       const id = linkData.id || generateLinkId();
       
       // Check if the link already exists (by ID or URL)
-      const existingLinkById = linksData.links.find(l => l.id === id);
-      const existingLinkByUrl = linksData.links.find(l => l.url === linkData.url);
+      // Search through all categories and subcategories
+      let existingLinkById: Link | undefined;
+      let existingLinkByUrl: Link | undefined;
+      
+      // Search through all categories and subcategories
+      for (const category of linksData.categories) {
+        for (const subcategory of category.subcategories) {
+          if (!existingLinkById) {
+            existingLinkById = subcategory.links.find(l => l.id === id);
+          }
+          if (!existingLinkByUrl) {
+            existingLinkByUrl = subcategory.links.find(l => l.url === linkData.url);
+          }
+          if (existingLinkById && existingLinkByUrl) break;
+        }
+        if (existingLinkById && existingLinkByUrl) break;
+      }
+      
       const existingLink = existingLinkById || existingLinkByUrl;
       
       // Prepare link object
@@ -158,15 +174,7 @@ export async function batchImportLinks(options: BatchImportOptions): Promise<Bat
             }
           }
           
-          // Also update in the top-level links array
-          const topLevelIndex = linksData.links.findIndex(l => l.id === id || l.url === linkData.url);
-          if (topLevelIndex >= 0) {
-            linksData.links[topLevelIndex] = {
-              ...linksData.links[topLevelIndex],
-              ...link,
-              updatedAt: new Date().toISOString()
-            };
-          }
+          // No need to update in a top-level links array as it no longer exists
           
           // If not found in any subcategory, add to the appropriate one
           if (!found) {
@@ -182,11 +190,7 @@ export async function batchImportLinks(options: BatchImportOptions): Promise<Bat
           // Add to the appropriate category/subcategory
           addLinkToCategory(linksData, link);
           
-          // Also add to the top-level links array
-          linksData.links.push({
-            ...link,
-            createdAt: new Date().toISOString()
-          });
+          // No need to add to a top-level links array as it no longer exists
         }
         
         result.added++;
